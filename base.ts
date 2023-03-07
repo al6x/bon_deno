@@ -4,7 +4,7 @@ export * from './base/map.ts'
 export type something = any
 
 // Global variables for browser and node -----------------------------------------------------------
-export const global = window
+// export const global: something = window
 
 // Useful constants --------------------------------------------------------------------------------
 export const kb = 1024, mb = 1024 * kb
@@ -16,16 +16,20 @@ export type Environment = 'development' | 'production' | 'test'
 let cached_environment: Environment | undefined = undefined
 export function get_environment(): Environment {
   if (cached_environment == undefined) {
-    const environment = Deno.env.get('environment') || 'development'
-    if (!['development', 'production', 'test'].includes(environment))
-      throw new Error(`invalid environment '${environment}'`)
-    cached_environment = environment as Environment
+    if (is_browser()) {
+      cached_environment = "development" as Environment
+    } else {
+      const environment = window.Deno.env.get('environment') || 'development'
+      if (!['development', 'production', 'test'].includes(environment))
+        throw new Error(`invalid environment '${environment}'`)
+      cached_environment = environment as Environment
+    }
   }
   return cached_environment
 }
 
 // is_browser --------------------------------------------------------------------------------------
-export function is_browser() { return false }
+export function is_browser() { return !("Deno" in window) }
 
 // p -----------------------------------------------------------------------------------------------
 function map_to_json_if_defined(v: something) { return v && v.toJSON ? v.toJSON() : v }
@@ -69,7 +73,7 @@ test.run = async () => {
       await test()
     } catch(e) {
       log('error', `test failed ${name ? ` '${name}'` : ''}`, e)
-      Deno.exit()
+      if (is_browser()) window.Deno.exit()
     }
   }
   log('info', 'tests passed')
@@ -121,7 +125,9 @@ export async function http_call<In, Out>(
       )
       if (!response.ok)
         throw new Error(`can't ${method} ${url} ${response.status} ${response.statusText}`)
-      return await response.json()
+      let data = await response.json()
+      if (data.is_error) throw new Error(data.message || "Unknown error")
+      return data
     } catch (e) {
       throw e
     }
@@ -162,7 +168,7 @@ export function is_number(n: number | undefined | null): n is number {
 // assert -------------------------------------------------------------------------
 export interface Assert {
   (condition: boolean, message?: string | (() => string)): void
-  warn(condition: boolean, message?: string | (() => string)): void
+  warn(condition: boolean, message?: string): void
   equal(a: unknown, b: unknown, message?: string | (() => string)): void
   approx_equal(a: number, b: number, message?: string | (() => string), delta_relative?: number): void
 }
@@ -207,6 +213,7 @@ export function deep_clone_and_sort(obj: something): something {
 export function stable_json_stringify(obj: unknown, pretty = true): string {
   return pretty ? JSON.stringify(deep_clone_and_sort(obj), null, 2) : JSON.stringify(deep_clone_and_sort(obj))
 }
+export const to_json = stable_json_stringify
 
 // is_equal -----------------------------------------------------------------------
 export function is_equal(a: unknown, b: unknown): boolean {
@@ -240,7 +247,7 @@ test(() => {
 let cached_is_debug_enabled: boolean | undefined = undefined
 export function is_debug_enabled(): boolean {
   if (cached_is_debug_enabled == undefined)
-    cached_is_debug_enabled = Deno.env.get('debug')?.toLowerCase() == "true"
+    cached_is_debug_enabled = window.Deno.env.get('debug')?.toLowerCase() == "true"
   return cached_is_debug_enabled
 }
 
@@ -271,15 +278,11 @@ const log_clean_error = (error: Error) => {
   return clean
 }
 
-function log(message: string, short?: something, detailed?: something): void
+// function log(message: string, short?: something, detailed?: something): void
 function log(
   level: LogLevel, message: string, short?: something, detailed?: something
-): void
-function log(...args: something[]): void {
-  const level = ['info', 'warn', 'error', 'debug'].includes(args[0]) ? args.shift() : 'info'
+): void {
   if (level == 'debug' && !is_debug_enabled()) return
-  const [message, short, detailed] = args
-
   get_environment() == 'development' ?
     log_in_development(level, message, short, detailed) :
     log_not_in_development(level, message, short, detailed)
@@ -797,6 +800,9 @@ export function ensure<V>(value: (V | undefined) | Found<V>, info?: string): V {
   if ((typeof value == 'object') && ('found' in value)) {
     if (!value.found) throw new Error(value.message || `value${info ? ' ' + info : ''} not found`)
     else              return value.value
+  } else if ((typeof value == 'string')) {
+    if (value == "") throw new Error(`string value${info ? ' ' + info : ''} not found`)
+    else              return value
   } else {
     if (value === undefined) throw new Error(`value${info ? ' ' + info : ''} not defined`)
     else              return value
